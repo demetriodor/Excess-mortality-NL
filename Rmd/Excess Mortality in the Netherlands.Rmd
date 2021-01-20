@@ -1,0 +1,161 @@
+---
+title: "Excess Mortality in the Netherlands"
+author: Dimiter Toshkov (@DToshkov)
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+
+output: 
+  html_document:
+    theme: default
+    self_contained: yes
+    toc: yes
+    toc_float: true
+
+---
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+library(metathis)
+meta() %>%
+  meta_general(
+    robots = "index,follow",
+    subject = "Excess mortality"
+  ) %>%
+  meta_description(
+    "Excess mortality in the Netheralnds"
+  ) %>% 
+  meta_name("github-repo" = "demetriodor/ESSwithR",
+            "keywords" = 'mortality, covid-19, covid 19, covid, pandemic, excess mortality, corona virus, deaths, the netherlands, nederland, oversterfte'
+  ) %>% 
+  meta_viewport() %>% 
+  meta_social(
+    title = "Excess mortality in the Netherlands",
+    url = "http://dimiter.eu/Visualizations_files/Excess-Mortality-NL.html",
+    og_type = "article",
+    og_author = c("Dimiter Toshkov"),
+    og_site_name = 'http://dimiter.eu',
+    twitter_card_type = "summary",
+    twitter_creator = "@DToshkov"
+  )
+```
+
+<style type="text/css">
+  div.main-container {
+    max-width: 1680px;
+    margin-left: auto;
+    margin-right: auto;
+  }
+
+code{
+  font-size: 16px;
+}
+
+code.r{
+  font-size: 14px;
+}
+
+pre {
+  font-size: 14px
+}
+
+</style>
+  
+```{r set-options, echo=FALSE, cache=FALSE}
+options(width = 1280)
+```
+&nbsp;
+
+# Introduction
+<font size="3">
+What has been the impact of COVID-19 on mortality? In this article I calculate, chart and explore excess mortality in the Netherlands during 2020. I find a very significant increase in the number of deaths during the year, above and beyond the ones expected to occur in the absence of special circumstances. The expected numbers of deaths come from statistical models with very good predictive performance. Most of the excess mortality can be directly or indirectly attributed to COVID-19, with a small exception related to a heat wave in the summer. The officially registered COVID-19 deaths account for three-quarters of the observed excess mortality. Excess mortality is considerably higher for men than for women. It is biggest for the 80+ age group, but it is also present for the age group 65-to-80 and even in the youngest age group 0-to-65. 
+
+The focus of this article is on the *presentation* and *exploration* of the excess mortality data. If you are interested in the methodology for estimating excess mortality and the details of statistical models, check out this [step-by-step guide](http://dimiter.eu/Visualizations_files/nlmortality/Modeling-Mortality.html). If you are interested in how the data is assembled, see the files in the data preparation folder of [this project](https://github.com/demetriodor/Excess-mortality-NL/) on `Github`. 
+
+# Excess mortality in 2020 
+To visualize excess mortality in 2020, first we load the pre-processed dataset that pools together data from CBS, ECDC and weather stations. We then estimate a robust linear regression model on the data from 2010 till 2019, and then we extrapolate from this model for 2020 to calculate the expected mortality for each week of the year. 
+
+```{r eval=TRUE, collapse=TRUE, message = FALSE, warning = FALSE, include=FALSE}
+library(MASS)
+library(tidyverse)
+my.round <- function (x, n=0) {format(round(x, digits=n), big.mark = ',')}
+
+# Load the pre-processed data file
+load(file = './data/nl_mortality_pop_covid_weather2020.RData')
+
+# Prepare data for model building and evaluation
+i = 2020
+d.model <- d %>% filter (year > (i - 9), year < i) 
+d.eval  <- d %>% filter (year == i) 
+
+# Model for predictions
+m4d<-rlm(deaths ~ sin(2*pi*week/52) + cos(2*pi*week/52) + share.65 + t.min + t.max + n_days, data=d.model, psi = psi.hampel)
+predict.m4d.set<-predict (m4d, newdata=d.eval, se.fit=TRUE, interval="prediction", level=0.95)
+predict.m4d<-predict.m4d.set$fit[,1]
+predict.m4d.up<-predict.m4d.set$fit[,1]
+predict.m4d.down<-predict.m4d.set$fit[,1]
+
+# Define and calculate some quantities
+mae.m4d<-mean(abs(predict.m4d - d.eval$deaths))
+mse.m4d<-mean((predict.m4d - d.eval$deaths)^2)
+total.deaths = sum(d.eval$deaths)
+total.covid = sum (d.eval$covid)
+total.predicted = sum(predict.m4d)
+net.excess = total.deaths - total.predicted
+net.excess.percent = net.excess/total.predicted*100
+
+# Add week 53 for prettier graphs
+temp <-last(d.eval$deaths)
+temp2 <-tail(predict.m4d,1)
+predict.m4d[length(predict.m4d)] <- 7/11*temp2
+predict.m4d <- c(predict.m4d, 4/11*temp2)
+predict.m4d
+d.2020 <- d.eval %>% 
+  add_row (week = 53, deaths = 4/11*temp) %>%
+  mutate (deaths = case_when(week==52 ~ 7/11*temp, TRUE ~ deaths))
+```
+
+The expected number of deaths is `r my.round(total.predicted)`, while the number of deaths that were actually recorded during the year is `r my.round(total.deaths)`, which is considerably higher - more precisely, it is `r my.round(net.excess.percent)`% higher than the expected.  Let's see how mortality was distributed over the year. Based on the first few weeks before the first COVID-19 cases were registered in the Netherlands, it looks like our model is, if anything, over-predicting the number of deaths. Note that Week 1 and Week 53 are incomplete, which explains why they have lower numbers of expected and registered deaths.
+&nbsp;
+
+![](./figures/F_NL_mortality_19012021.png)
+&nbsp;
+
+The next figure zooms in on excess mortality, and plots the difference from the expected values for each week directly. As we can see, the periods of excess mortality are concentrated in two periods: between Week 11 and Week 19, and after Week 39. The small peak in Week 33 is related to the summer heat wave, but note that the model expects to some extent these additional deaths, because it has temperature included in the predictors (but the prediction might be party off by a week due to the way data is aggregated; hence the blue *negative* excess mortality in Week 32.)
+&nbsp;
+
+![](./figures/F_NL_excess_mortality_19012021.png)
+&nbsp;
+
+# Validing the model
+The scale of excess mortality in 2020 appears to be massive, but it all hinges on the statistical model providing good predictions about what would have happened in 2020 in the absence of abnormal circumstances. But how do we know that the model is good? You can read this [guide](http://dimiter.eu/Visualizations_files/nlmortality/Modeling-Mortality.html) for details, but one way to check the predictive performance of the model is to evaluate it against data from 2019 (of course, to have a fair challenge we will not use data from 2019 when we estimate the model).
+
+The figure below plots the predicted and observed number of deaths in 2019, with the predictions based on the same methodology used for estimating expected mortality for the figures and analysis of 2020 data. As we can see, the match between the predicted and observed values in 2019, which was a fairly typical year, is excellent. Note also that the range of variation in the number of deaths per week is much smaller than in 2020 (Week 1 and Week 52 are exceptions because they they have a different number of days). Note as well that the predictions based on the average from the past five years (grey dots and lines) is not as good as the statistical model we use, even when population is controlled for.  
+&nbsp;
+
+![](./figures/F_NL_2019_mortality_19012021.png)
+&nbsp;
+
+# Excess mortality in the Netherlands, 2011-2020
+2019 might have been exceptional in the absence of special circumstances contributing to abnormal - too high or too low - mortality. So let's see how the excess mortality estimated in 2020 compares to excess mortality for each of the past ten years. Excess mortality for each year is calculated using the same model estimated on the nine years prior to it.
+&nbsp;
+
+![](./figures/F_NL_excess_mortality_overtime_19012021.png)
+&nbsp;
+
+Even 2015 - the year with the highest positive excess mortality prior to 2020 (4% from the expected deaths) - does not come even close to 2020. In other words, 2020 recorded more than 2.5 times more 'excess' deaths than the second worst year since 2011. In fact, when we sum up the excess mortality for all years from 2011 to 2019, we still get a lower number than the one observed in 2020 alone.
+
+# Excess mortality in 2020 in different groups
+We can look in more detail how the 2020 excess mortality is distributed in different gender and age-based groups. Examining the graph below, we observe significant differences in excess mortality between men and women in 2020. Excess mortality for men is 11% higher than expected, while for women it is 'only' 7% higher. During both waves excess mortality seems to rise first for women, but the peaks are higher for men, especially during the first wave. The higher excess mortality for men is quite remarkable given that men comprise a smaller share than women in the older population, which has been most heavily affected by COVID-19 related mortality.
+&nbsp;
+
+![](./figures/F_NL_gender_excess_mortality_19012021.png)
+&nbsp;
+
+Looking at the graph of mortality per age group, it is clear that excess mortality, at 11%, is highest in the group of people older than 80 (80+). Mortality is up 7% in the age group 65-to-80 years old. Even though the absolute numbers of deaths are much lower in the group 0-to-65, there is still 4% excess mortality in that group as well. 
+&nbsp;
+
+![](./figures/F_NL_age_excess_mortality_19012021.png)
+&nbsp;
+
+# Conclusion
+There is massive excess mortality in 2020 in the Netherlands. The expected number of deaths is exceeded by more than 10%, with close to 15,000 additional deaths in total. Such an increase is unprecedented in recent history and dwarfs any flu epidemic from the past 10 years. Excess mortality is visible in all age groups, but is highest among people above 80. It is higher among men than among women. 
+
+In the absence of major accidents, wars, natural disasters (other than a short heat wave) or a major flu epidemic, we have to conclude that this excess mortality is related to COVID-19, directly or indirectly. The sum of the number of deaths officially attributed to COVID-19 during 2020 is `r my.round(total.covid)`, which is `r my.round (total.covid/net.excess*100)`% from the net excess mortality. But as we can see from the graphs above, reporting of COVID-19 has not been perfect, so it is likely that a significant proportion of the remaining excess mortality is also caused by COVID-19 directly. The rest may be a result of indirect impact of COVID-19 due to delayed medical interventions, canceled operations, late diagnoses or people not seeking medical care on time. Some of the indirect effects of COVID-19 on mortality might be positive as well, for example due to social distancing, better hygiene or less time spent in traffic. But if this is the case, it would mean that our baseline predictions about mortality in 2020 should be adjusted downwards, which would result in an even higher estimate for the excess mortality during the year. Let's hope that all these worrying trends will be reversed in 2021!
